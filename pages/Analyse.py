@@ -8,7 +8,7 @@ import io
 db_host = 'Farol\SQLEXPRESS'  
 db_user = 'hackathon1'      
 db_password = '123456'  
-db_name = 'image_analysis'
+db_name = 'image_analysis'  
 DATABASE_URL = f"mssql+pyodbc://{db_user}:{db_password}@{db_host}/{db_name}?driver=ODBC+Driver+17+for+SQL+Server"
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -17,7 +17,7 @@ Base = declarative_base()
 class ImageAnalysis(Base):
     __tablename__ = "image_analysis_results"
     id = Column(Integer, primary_key=True)
-    file_key = Column(String(1000), unique=True)
+    file_key = Column(String, unique=True)
     result = Column(Text)
     image_data = Column(LargeBinary)
 
