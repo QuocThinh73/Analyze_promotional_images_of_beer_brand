@@ -10,17 +10,21 @@ from sqlalchemy.ext.declarative import declarative_base
 from PIL import Image
 import io
 import requests
-st.set_page_config(layout="wide")
+from models import image_easyocr, image_caption, facial_expression, get_object_yolo, analyze_image_information
+import os
+
+# Set page configuration as the first Streamlit command
+st.set_page_config(layout="wide", page_title="Web AI Image Part Identification")
+
+# Define global configurations and CSS
 html_content = """<div class='menu'><div class='menu-header'>Upload your pic here!</div></div>"""
 css_styles = """<style>body {font-family: Arial, sans-serif;} .menu {margin-top: 20px; text-align: center;} .menu-header {font-size: 50px; font-weight: bold; color: #ffffff; margin-bottom: 20px;}</style>"""
 
-def analyze_image(image):
-    return "Sample Analysis Result"
 
-db_host = 'Farol\SQLEXPRESS'  # Adjust as necessary
-db_user = 'hackathon1'       # Adjust as necessary
-db_password = '123456'  # Adjust as necessary
-db_name = 'image_analysis'  # Adjust as necessary
+db_host = 'Farol\SQLEXPRESS'
+db_user = 'hackathon1'
+db_password = '123456'
+db_name = 'image_analysis'
 DATABASE_URL = f"mssql+pyodbc://{db_user}:{db_password}@{db_host}/{db_name}?driver=ODBC+Driver+17+for+SQL+Server"
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -33,7 +37,6 @@ class ImageAnalysis(Base):
     result = Column(Text)
     image_data = Column(LargeBinary)
 
-
 Base.metadata.create_all(bind=engine)
 
 def get_db():
@@ -44,11 +47,26 @@ def get_db():
         db.close()
 
 def save_analysis_result(db, file_key, result, image_data):
-    analysis = ImageAnalysis(file_key=file_key, result=result, image_data=image_data)
-    db.add(analysis)
-    db.commit()
-    db.refresh(analysis)
-    return analysis
+    # Kiểm tra xem file_key đã tồn tại trong cơ sở dữ liệu hay chưa
+    existing_record = db.query(ImageAnalysis).filter_by(file_key=file_key).first()
+    if existing_record:
+        # Nếu file_key đã tồn tại, thông báo cho người dùng
+        st.info("Hình này đã có trong cơ sở dữ liệu.")
+        return None
+    else:
+        # Nếu file_key chưa tồn tại, tiến hành chèn bản ghi mới
+        try:
+            analysis = ImageAnalysis(file_key=file_key, result=result, image_data=image_data)
+            db.add(analysis)
+            db.commit()
+            db.refresh(analysis)
+            st.success("Image analysis result saved successfully.")
+            return analysis
+        except Exception as e:
+            # Xử lý ngoại lệ nếu quá trình chèn gặp lỗi
+            db.rollback()
+            st.error(f"An error occurred: {str(e)}")
+            return None
 
 def get_images_from_facebook_status(status_url):
     chrome_options = Options()
@@ -61,7 +79,6 @@ def get_images_from_facebook_status(status_url):
     image_urls = [img.get_attribute('src') for img in img_elements if 'scontent' in img.get_attribute('src')]
     driver.quit()
     return image_urls
-
 
 def convert_image_to_binary(image_input):
     if isinstance(image_input, str) and image_input.startswith('http'):
@@ -76,27 +93,79 @@ def convert_image_to_binary(image_input):
         image.save(byte_io, format='PNG')
         return byte_io.getvalue()
 
+def save_uploaded_file(uploaded_file):
+    # Lưu file đã tải lên vào thư mục tạm thời
+    temp_dir = "temp_uploads"
+    os.makedirs(temp_dir, exist_ok=True)
+    file_path = os.path.join(temp_dir, uploaded_file.name)
+    with open(file_path, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+    return file_path
+
 def main():
     st.markdown("# Web AI Image Part Identification")
     st.sidebar.markdown(html_content, unsafe_allow_html=True)
     st.sidebar.markdown(css_styles, unsafe_allow_html=True)
     uploaded_files = st.sidebar.file_uploader("Choose images...", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
+    status_url = st.sidebar.text_input("Enter Facebook status URL:")
+    fb_button_pressed = st.sidebar.button("Retrieve Images from Facebook Status")
+
+    # Main content
+    image_column, analysis_column = st.columns(2)  # Create two columns
+
     if uploaded_files:
         for uploaded_file in uploaded_files:
+            file_path = save_uploaded_file(uploaded_file)
+            image = Image.open(file_path).convert("RGB")
             image_binary = convert_image_to_binary(uploaded_file)
-            result = analyze_image(uploaded_file)
-            db = next(get_db())
-            save_analysis_result(db, uploaded_file.name, result, image_binary)
+            
+            # Models
+            ocr_results = image_easyocr.perform_ocr(image)
+            image_caption_results = image_caption.get_image_caption(image)
+            facial_expression_results = facial_expression.analyze_emotion(file_path)
+            yolo_results = get_object_yolo.get_object_yolo(file_path)
+            #st.write(ocr_results)
+            #st.write(image_caption_results)
+            #st.write(facial_expression_results)
+            #st.write(yolo_results)
+            with image_column:
+                st.image(image, caption="Uploaded Image")
 
-    status_url = st.sidebar.text_input("Enter Facebook status URL:")
-    if status_url and st.sidebar.button("Retrieve Images from Facebook Status"):
+            with analysis_column:
+                result = analyze_image_information.analyze_image_information(image_caption_results, ocr_results, yolo_results, facial_expression_results)
+                db = next(get_db())
+                analysis = save_analysis_result(db, uploaded_file.name, result, image_binary)
+                if analysis:
+                    st.write(result)
+                else:
+                    st.write("Ảnh này đã có trong cơ sở dữ liệu.")
+
+    if status_url and fb_button_pressed:
         images = get_images_from_facebook_status(status_url)
         if images:
             for image_url in images:
+                file_path = save_uploaded_file(image_url)
                 image_binary = convert_image_to_binary(image_url)
-                result = analyze_image(image_url)
-                db = next(get_db())
-                save_analysis_result(db, image_url, result, image_binary)
+                #image = Image.open(io.BytesIO(image_binary))
+                image = Image.open(file_path).convert("RGB")
+
+                # Models
+                ocr_results = image_easyocr.perform_ocr(img)
+                image_caption_results = image_caption.get_image_caption(img)
+                facial_expression_results = facial_expression.analyze_emotion(file_path)
+                yolo_results = get_object_yolo.get_object_yolo(file_path)
+
+                with image_column:
+                    st.image(image, caption="Facebook Image")
+
+                with analysis_column:
+                    result = analyze_image_information.analyze_image_information(image_caption_results, ocr_results, yolo_results, facial_expression_results)
+                    db = next(get_db())
+                    analysis = save_analysis_result(db, image_url, result, image_binary)
+                    if analysis:
+                        st.write(f"**Analysis Result:** {result}")
+                    else:
+                        st.write("Ảnh này đã có trong cơ sở dữ liệu.")
 
 if __name__ == "__main__":
     main()
