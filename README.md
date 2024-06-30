@@ -82,3 +82,17 @@ Database Management:
 
 All image analysis results are stored in the SQL Server database.
 The file_key ensures that duplicate images are not stored multiple times.
+
+Troubleshooting
+Database Connection Issues:
+
+Ensure that the SQL Server is running and accessible.
+Verify that the DATABASE_URL in the script is correct.
+Package Installation Issues:
+
+Ensure all required packages are installed in your virtual environment.
+Check for any compatibility issues with your Python version.
+General Errors:
+
+Check the Streamlit logs for detailed error messages.
+Verify that all custom model files are correctly imported and available.
